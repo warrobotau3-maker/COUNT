@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -13,15 +14,14 @@ logging.basicConfig(
 )
 
 # --- DATA STORAGE (In-Memory) ---
-# Format: { user_id: { "name": "User Name", "word_count": 0 } }
 user_data = {}
 
 # --- FUNCTIONS ---
 
-async def count_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def count_letters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Runs on every text message. 
-    Calculates number of words and adds to user total.
+    Counts actual letters/characters, excluding spaces.
+    Example: 'Hi You' = 5 letters.
     """
     if not update.message or not update.message.from_user or not update.message.text:
         return
@@ -30,80 +30,54 @@ async def count_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     user_name = user.first_name
     
-    # Calculate words in this specific message
-    # .split() breaks the sentence by spaces
+    # 1. Get raw text
     text = update.message.text
-    num_words = len(text.split())
+    
+    # 2. Remove spaces and punctuation to count only letters/numbers
+    # This regex [^\w] removes anything that isn't a letter or number
+    clean_text = re.sub(r'\s+', '', text) 
+    letter_count = len(clean_text)
 
-    # Initialize user if not exists
+    # 3. Save to memory
     if user_id not in user_data:
-        user_data[user_id] = {"name": user_name, "word_count": 0}
+        user_data[user_id] = {"name": user_name, "total_letters": 0}
     
-    # Add words to total
-    user_data[user_id]["word_count"] += num_words
+    user_data[user_id]["total_letters"] += letter_count
     
-    # Update name in case they changed it
-    user_data[user_id]["name"] = user_name
+    print(f"User {user_name} sent {letter_count} letters. Total: {user_data[user_id]['total_letters']}")
 
 async def my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Command: /mystats
-    Shows the total WORD count for the user.
-    """
-    user = update.message.from_user
-    user_id = user.id
-
+    user_id = update.message.from_user.id
     if user_id in user_data:
-        count = user_data[user_id]["word_count"]
-        await update.message.reply_text(f"📝 {user.first_name}, you have typed **{count}** words.", parse_mode='Markdown')
+        count = user_data[user_id]["total_letters"]
+        await update.message.reply_text(f"🔤 You have typed **{count} letters** total.", parse_mode='Markdown')
     else:
-        await update.message.reply_text("You haven't typed anything yet!")
+        await update.message.reply_text("I haven't seen you type any letters yet!")
 
-async def top_yappers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Command: /top
-    Shows the top 5 users by word count.
-    """
+async def top_letters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_data:
-        await update.message.reply_text("No words tracked yet.")
+        await update.message.reply_text("No data yet.")
         return
 
-    # Sort users by word_count (highest first)
-    sorted_users = sorted(user_data.items(), key=lambda item: item[1]['word_count'], reverse=True)
+    # Sort by letter count
+    sorted_users = sorted(user_data.items(), key=lambda item: item[1]['total_letters'], reverse=True)
     
-    # Get top 5
-    top_5 = sorted_users[:5]
-    
-    message = "🏆 **Top Yappers (Word Count)** 🏆\n\n"
-    for rank, (uid, data) in enumerate(top_5, 1):
-        message += f"{rank}. {data['name']}: {data['word_count']} words\n"
+    message = "🏆 **Letter Count Leaderboard** 🏆\n\n"
+    for rank, (uid, data) in enumerate(sorted_users[:5], 1):
+        message += f"{rank}. {data['name']}: {data['total_letters']} letters\n"
 
     await update.message.reply_text(message, parse_mode='Markdown')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("I am listening! I will count how many WORDS everyone types.\nUse /mystats to see your count or /top to see the leaderboard.")
-
-# --- MAIN EXECUTION ---
+    await update.message.reply_text("Bot active! I am now counting **LETTERS** (excluding spaces).")
 
 if __name__ == '__main__':
-    if not TOKEN:
-        print("Error: BOT_TOKEN environment variable not set.")
-        exit(1)
-
     application = ApplicationBuilder().token(TOKEN).build()
     
-    # Handlers
-    start_handler = CommandHandler('start', start)
-    stats_handler = CommandHandler('mystats', my_stats)
-    top_handler = CommandHandler('top', top_yappers)
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('mystats', my_stats))
+    application.add_handler(CommandHandler('top', top_letters))
     
-    # Filters text messages only (no photos/stickers)
-    message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), count_words)
-
-    application.add_handler(start_handler)
-    application.add_handler(stats_handler)
-    application.add_handler(top_handler)
-    application.add_handler(message_handler)
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), count_letters))
     
-    print("Bot is running...")
     application.run_polling()
